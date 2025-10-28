@@ -1,0 +1,14 @@
+# Môi trường ảo
+venv/
+.venv/
+
+# File hệ thống Python
+__pycache__/
+*.pyc
+
+# File chứa dữ liệu khuôn mặt đã mã hóa
+encodings.pkl
+
+# File cài đặt của các IDE
+.vscode/
+.idea/
