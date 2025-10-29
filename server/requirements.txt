@@ -4,3 +4,4 @@ python-multipart
 face_recognition
 numpy
 opencv-python-headless
+jinja2
