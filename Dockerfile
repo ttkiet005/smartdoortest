@@ -1,19 +1,46 @@
+# ===========================
 # Base image
+# ===========================
 FROM python:3.11-slim
 
-# Làm việc trong /app/server (vì main.py nằm trong server/)
+# Làm việc trong thư mục /app/server (vì main.py nằm ở đây)
 WORKDIR /app/server
 
-# Copy requirements và cài đặt
-COPY requirements.txt .
+# ===========================
+# Cài các thư viện hệ thống cần thiết
+# ===========================
+RUN apt-get update && apt-get install -y \
+    cmake \
+    build-essential \
+    libgl1 \
+    libglib2.0-0 \
+    libopenblas-dev \
+    liblapack-dev \
+    libx11-dev \
+    && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir -r requirements.txt
+# ===========================
+# Sao chép file yêu cầu trước để tận dụng cache
+# ===========================
+COPY requirements.txt /app/requirements.txt
 
-# Copy toàn bộ mã nguồn
+# ===========================
+# Cài thư viện Python
+# ===========================
+RUN pip install --upgrade pip
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# ===========================
+# Sao chép toàn bộ mã nguồn
+# ===========================
 COPY . /app
 
-# Expose port
+# ===========================
+# Mở cổng
+# ===========================
 EXPOSE 5000
 
-# Chạy app
-CMD ["python", "server/main.py"]
+# ===========================
+# Chạy ứng dụng
+# ===========================
+CMD ["python", "main.py"]
