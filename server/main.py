@@ -9,6 +9,7 @@ from fastapi import FastAPI, Request, UploadFile, Form
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.responses import HTMLResponse
 
 app = FastAPI(title="SmartDoor Face Recognition API")
 
@@ -28,6 +29,42 @@ os.makedirs(TEMPLATE_FOLDER, exist_ok=True)
 
 # Static files (để xem ảnh upload)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
+
+
+
+# Cho phép truy cập trực tiếp vào thư mục uploads
+app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
+
+@app.get("/gallery", response_class=HTMLResponse)
+async def gallery():
+    """Trang hiển thị toàn bộ ảnh đã upload"""
+    files = sorted(os.listdir(UPLOAD_FOLDER), reverse=True)
+    image_tags = ""
+    for file in files:
+        if file.lower().endswith((".jpg", ".jpeg", ".png")):
+            image_url = f"/uploads/{file}"
+            image_tags += f"""
+            <div style='display:inline-block;margin:10px;text-align:center;'>
+                <img src='{image_url}' width='200' style='border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.2)'>
+                <p>{file}</p>
+            </div>
+            """
+
+    html_content = f"""
+    <html>
+        <head>
+            <title>Thư viện ảnh upload</title>
+        </head>
+        <body style='font-family:Arial;text-align:center;padding:30px;'>
+            <h2>📸 Thư viện ảnh đã upload</h2>
+            <div>{image_tags or '<p>Chưa có ảnh nào được upload.</p>'}</div>
+            <br>
+            <a href="/upload" style="text-decoration:none;color:blue;">⬅ Quay lại trang upload</a>
+        </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
 
 # Giao diện web
 templates = Jinja2Templates(directory=TEMPLATE_FOLDER)
