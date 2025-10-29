@@ -3,11 +3,11 @@
 # ===========================
 FROM python:3.11-slim
 
-# Làm việc trong thư mục /app/server (vì main.py nằm ở đây)
-WORKDIR /app/server
+# Làm việc trong thư mục /app
+WORKDIR /app
 
 # ===========================
-# Cài các thư viện hệ thống cần thiết
+# Cài thư viện hệ thống cần thiết
 # ===========================
 RUN apt-get update && apt-get install -y \
     cmake \
@@ -20,27 +20,23 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # ===========================
-# Sao chép file yêu cầu trước để tận dụng cache
+# Copy và cài đặt thư viện Python
 # ===========================
-COPY requirements.txt /app/requirements.txt
-
-# ===========================
-# Cài thư viện Python
-# ===========================
+COPY server/requirements.txt .
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir -r /app/requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # ===========================
-# Sao chép toàn bộ mã nguồn
+# Sao chép toàn bộ mã nguồn vào container
 # ===========================
-COPY . /app
+COPY server/ /app/
 
 # ===========================
-# Mở cổng
+# Expose port
 # ===========================
 EXPOSE 5000
 
 # ===========================
-# Chạy ứng dụng
+# Run ứng dụng
 # ===========================
 CMD ["python", "main.py"]
