@@ -165,6 +165,86 @@ async def upload_image(request: Request, file: UploadFile):
     except Exception as e:
         return HTMLResponse(f"<h3>Error: {str(e)}</h3>")
 
+@app.post("/recognize")
+async def recognize_face(request: Request):
+    MAX_IMAGE_SIZE = 3 * 1024 * 1024  # 3MB
+
+    try:
+        image_bytes = await request.body()
+        if len(image_bytes) == 0:
+            return PlainTextResponse("no", status_code=400)
+        if len(image_bytes) > MAX_IMAGE_SIZE:
+            return PlainTextResponse("no", status_code=413)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        print(f"\n[{datetime.now().strftime('%H:%M:%S')}] New request: {len(image_bytes)} bytes")
+
+        # Giải mã ảnh
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            print("   ✗ Invalid image format")
+            return PlainTextResponse("no", status_code=400)
+
+        # Lưu ảnh upload
+        image_name = f"{timestamp}.jpg"
+        image_path = os.path.join(UPLOAD_FOLDER, image_name)
+        cv2.imwrite(image_path, frame)
+        print(f"   Saved uploaded image: {image_path}")
+
+        # Nhận diện khuôn mặt
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_locations = face_recognition.face_locations(rgb, model="hog")
+        face_encodings = face_recognition.face_encodings(rgb, face_locations)
+        print(f"   Found {len(face_locations)} face(s)")
+
+        result = {
+            "status": "no",
+            "timestamp": datetime.now().isoformat(),
+            "name": None,
+            "confidence": 0,
+            "image_url": f"/uploads/{image_name}",
+        }
+
+        if len(face_encodings) > 0 and len(known_face_encodings) > 0:
+            for face_encoding in face_encodings:
+                face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+                best_match_index = np.argmin(face_distances)
+                best_distance = face_distances[best_match_index]
+
+                if best_distance < 0.5:
+                    name = known_face_names[best_match_index]
+                    confidence = (1 - best_distance) * 100
+                    result.update({
+                        "status": "yes",
+                        "name": name,
+                        "confidence": round(confidence, 2),
+                    })
+                    print(f"   ✓ Match found: {name} ({confidence:.2f}%)")
+                    break
+
+        # Ghi log JSONL
+        log_entry = {
+            "timestamp": result["timestamp"],
+            "status": result["status"],
+            "name": result["name"],
+            "confidence": result["confidence"],
+            "image": result["image_url"],
+        }
+        with open(os.path.join(LOG_FOLDER, "recognition_log.jsonl"), "a", encoding="utf-8") as log:
+            log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+        # Trả kết quả JSON
+        return JSONResponse(result)
+
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+
+# ================================
+# API: Reload khuôn mặt thủ công
+# ================================
 # ================================
 # API kiểm tra trạng thái
 # ================================
