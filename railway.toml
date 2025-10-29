@@ -1,6 +1,5 @@
 [build]
-builder = "railway/python"
 buildCommand = "pip install -r server/requirements.txt"
 
 [start]
-cmd = "python server/main.py"
+startCommand = "python server/main.py"
