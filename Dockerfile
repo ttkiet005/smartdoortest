@@ -1,7 +1,9 @@
 FROM python:3.11-slim
 
-# --- Cài đặt thư viện hệ thống cần cho dlib & face_recognition ---
+# --- Cài đặt thư viện hệ thống cần cho dlib, face_recognition ---
 RUN apt-get update && apt-get install -y \
+    cmake \
+    g++ \
     libgl1 \
     libglib2.0-0 \
     libsm6 \
