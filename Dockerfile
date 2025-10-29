@@ -5,7 +5,7 @@ FROM python:3.11-slim
 WORKDIR /app/server
 
 # Copy requirements và cài đặt
-COPY server/requirements.txt .
+COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
