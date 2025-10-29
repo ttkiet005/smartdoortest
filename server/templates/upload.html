@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <title>Upload Face Image</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; margin-top: 50px; }
+    form { border: 2px dashed #999; padding: 20px; display: inline-block; border-radius: 10px; }
+    input[type=file] { margin: 10px; }
+    button { background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <h2>Upload ảnh để nhận diện khuôn mặt</h2>
+  <form action="/upload" method="post" enctype="multipart/form-data">
+    <input type="file" name="file" accept="image/*" required><br>
+    <button type="submit">Gửi ảnh</button>
+  </form>
+</body>
+</html>
