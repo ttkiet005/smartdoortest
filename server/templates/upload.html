@@ -7,14 +7,59 @@
     body { font-family: sans-serif; text-align: center; margin-top: 50px; }
     form { border: 2px dashed #999; padding: 20px; display: inline-block; border-radius: 10px; }
     input[type=file] { margin: 10px; }
-    button { background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; }
+    button { background: #4CAF50; color: white; border: none; padding: 10px 20px; border-radius: 5px; cursor: pointer; margin-top:10px; }
+    video, canvas { border-radius: 10px; box-shadow: 0 2px 6px rgba(0,0,0,0.2); margin-top: 10px; }
   </style>
 </head>
 <body>
   <h2>Upload ảnh để nhận diện khuôn mặt</h2>
+
+  <!-- Form upload file -->
   <form action="/upload" method="post" enctype="multipart/form-data">
     <input type="file" name="file" accept="image/*" required><br>
     <button type="submit">Gửi ảnh</button>
   </form>
+
+  <hr>
+
+  <!-- Camera trực tiếp -->
+  <h3>📷 Hoặc chụp trực tiếp từ camera:</h3>
+  <video id="video" width="400" height="300" autoplay></video><br>
+  <button type="button" id="snap">Chụp & Upload</button>
+  <canvas id="canvas" width="400" height="300" style="display:none;"></canvas>
+  <div id="camera-result"></div>
+
+  <script>
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const snap = document.getElementById('snap');
+    const cameraResult = document.getElementById('camera-result');
+
+    // Bật camera
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(stream => video.srcObject = stream)
+      .catch(err => alert("Không thể truy cập camera: " + err));
+
+    snap.addEventListener('click', () => {
+      const context = canvas.getContext('2d');
+      context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+      // Chuyển canvas sang blob
+      canvas.toBlob(blob => {
+        const formData = new FormData();
+        formData.append("file", blob, "camera_capture.jpg");
+
+        fetch("/upload", {
+          method: "POST",
+          body: formData
+        })
+        .then(response => response.text())
+        .then(html => {
+          cameraResult.innerHTML = html;  // hiển thị kết quả ngay dưới camera
+        })
+        .catch(err => alert("Upload thất bại: " + err));
+      }, "image/jpeg");
+    });
+  </script>
 </body>
 </html>
