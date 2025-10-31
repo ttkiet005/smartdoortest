@@ -29,7 +29,7 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 templates = Jinja2Templates(directory=TEMPLATE_FOLDER)
 
 # ================================
-# Tải khuôn mặt đã lưu
+# Tải khuôn mặt
 # ================================
 known_face_encodings = []
 known_face_names = []
@@ -67,8 +67,44 @@ def load_known_faces():
 
 load_known_faces()
 
+# ============================================================
+# ✅ LOG SERIAL TỪ ESP32 — API /logs
+# ============================================================
+logs = []  # lưu 5000 dòng
+
+
+@app.post("/logs")
+async def logs_post(request: Request):
+    """
+    ESP32 gửi log vào đây bằng JSON:
+    {"log": "nội dung log"}
+    """
+    global logs
+    data = await request.json()
+    line = data.get("log")
+
+    if line:
+        logs.append(line)
+        if len(logs) > 5000:
+            logs = logs[-5000:]
+
+    return JSONResponse({"status": "ok"})
+
+
+@app.get("/logs")
+async def logs_get():
+    """Trả log dạng JSON"""
+    return JSONResponse({"logs": logs})
+
+
+@app.get("/logs/text")
+async def logs_text():
+    """Trả log dạng text giống Serial Monitor"""
+    return PlainTextResponse("\n".join(logs))
+
+
 # ================================
-# Trang upload web
+# Trang upload ảnh web
 # ================================
 @app.get("/upload", response_class=HTMLResponse)
 async def upload_page(request: Request):
@@ -77,7 +113,6 @@ async def upload_page(request: Request):
 
 @app.post("/upload", response_class=HTMLResponse)
 async def upload_image(request: Request, file: UploadFile):
-    """Upload ảnh từ form web"""
     try:
         content = await file.read()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -86,7 +121,6 @@ async def upload_image(request: Request, file: UploadFile):
         with open(image_path, "wb") as f:
             f.write(content)
 
-        # Nhận diện khuôn mặt
         nparr = np.frombuffer(content, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is None:
@@ -121,35 +155,25 @@ async def upload_image(request: Request, file: UploadFile):
 
 
 # ================================
-# API cho ESP32: trả về "yes"/"no"
+# API ESP32 gửi ảnh nhận diện
 # ================================
 @app.post("/recognize")
 async def recognize_face(request: Request):
-    """
-    ESP32 gửi ảnh binary (application/octet-stream)
-    -> Server trả về 'yes' nếu khớp, 'no' nếu không
-    -> Ảnh vẫn được lưu vào thư mục uploads/ để xem trong /gallery
-    """
     try:
         image_bytes = await request.body()
         if not image_bytes:
             return PlainTextResponse("no")
 
-        # Giải mã ảnh
         nparr = np.frombuffer(image_bytes, np.uint8)
         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         if frame is None:
-            print("   ✗ Invalid image format")
             return PlainTextResponse("no")
 
-        # ✅ Lưu ảnh lại trong thư mục uploads/
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         image_name = f"{timestamp}.jpg"
         image_path = os.path.join(UPLOAD_FOLDER, image_name)
         cv2.imwrite(image_path, frame)
-        print(f"   ✓ Saved uploaded image: {image_name}")
 
-        # Nhận diện khuôn mặt
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         encodings = face_recognition.face_encodings(rgb)
 
@@ -166,7 +190,6 @@ async def recognize_face(request: Request):
                 confidence = (1 - best_distance) * 100
                 result = "yes"
 
-        # Ghi log JSONL
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "result": result,
@@ -174,19 +197,18 @@ async def recognize_face(request: Request):
             "confidence": round(confidence, 2),
             "image": f"/uploads/{image_name}"
         }
+
         with open(os.path.join(LOG_FOLDER, "recognition_log.jsonl"), "a", encoding="utf-8") as log:
             log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
-        print(f"[{datetime.now().strftime('%H:%M:%S')}] → {result} ({matched_name or 'Unknown'})")
         return PlainTextResponse(result)
 
-    except Exception as e:
-        print(f"[ERROR] {e}")
+    except Exception:
         return PlainTextResponse("no")
 
 
 # ================================
-# Gallery ảnh upload
+# Gallery ảnh
 # ================================
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery():
@@ -215,9 +237,6 @@ async def gallery():
     """)
 
 
-# ================================
-# Trang root kiểm tra server
-# ================================
 @app.get("/")
 async def root():
     return {
@@ -229,8 +248,5 @@ async def root():
     }
 
 
-# ================================
-# Chạy server
-# ================================
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
