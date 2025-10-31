@@ -128,6 +128,7 @@ async def recognize_face(request: Request):
     """
     ESP32 gửi ảnh binary (application/octet-stream)
     -> Server trả về 'yes' nếu khớp, 'no' nếu không
+    -> Ảnh vẫn được lưu vào thư mục uploads/ để xem trong /gallery
     """
     try:
         image_bytes = await request.body()
@@ -141,7 +142,14 @@ async def recognize_face(request: Request):
             print("   ✗ Invalid image format")
             return PlainTextResponse("no")
 
-        # Nhận diện
+        # ✅ Lưu ảnh lại trong thư mục uploads/
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        image_name = f"{timestamp}.jpg"
+        image_path = os.path.join(UPLOAD_FOLDER, image_name)
+        cv2.imwrite(image_path, frame)
+        print(f"   ✓ Saved uploaded image: {image_name}")
+
+        # Nhận diện khuôn mặt
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         encodings = face_recognition.face_encodings(rgb)
 
@@ -164,6 +172,7 @@ async def recognize_face(request: Request):
             "result": result,
             "name": matched_name,
             "confidence": round(confidence, 2),
+            "image": f"/uploads/{image_name}"
         }
         with open(os.path.join(LOG_FOLDER, "recognition_log.jsonl"), "a", encoding="utf-8") as log:
             log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
