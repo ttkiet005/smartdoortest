@@ -6,7 +6,7 @@ import numpy as np
 from datetime import datetime
 import json
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
@@ -34,57 +34,49 @@ app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 known_face_encodings = []
 known_face_names = []
 
-print("=" * 60)
-print(f"[INFO] Loading known faces from: {FACE_FOLDER}")
-print("=" * 60)
+def load_known_faces():
+    global known_face_encodings, known_face_names
+    known_face_encodings = []
+    known_face_names = []
 
-for file in os.listdir(FACE_FOLDER):
-    path = os.path.join(FACE_FOLDER, file)
-    if file.lower().endswith((".jpg", ".jpeg", ".png")):
-        try:
-            image = face_recognition.load_image_file(path)
-            encodings = face_recognition.face_encodings(image)
-            
-            if encodings:
-                known_face_encodings.append(encodings[0])
-                name = os.path.splitext(file)[0]
-                known_face_names.append(name)
-                print(f"   ✓ Loaded: {name}")
-            else:
-                print(f"   ✗ No face found in: {file}")
-        except Exception as e:
-            print(f"   ✗ Error loading {file}: {str(e)}")
+    for file in os.listdir(FACE_FOLDER):
+        path = os.path.join(FACE_FOLDER, file)
+        if file.lower().endswith(".jpg"):
+            try:
+                image = face_recognition.load_image_file(path)
+                encodings = face_recognition.face_encodings(image)
+                if encodings:
+                    known_face_encodings.append(encodings[0])
+                    known_face_names.append(os.path.splitext(file)[0])
+            except:
+                pass
 
-print("=" * 60)
-print(f"[INFO] Total faces loaded: {len(known_face_names)}")
-if len(known_face_names) > 0:
-    print(f"[INFO] Names: {', '.join(known_face_names)}")
-else:
-     print("⚠ WARNING: No faces loaded! Add images to 'face_data' folder.")
-print("=" * 60 + "\n")
+load_known_faces()
 
 # ================================
 # UPLOAD PANEL
+# ================================
 UPLOAD_PASSWORD = "123456"
 
-os.makedirs(FACE_FOLDER, exist_ok=True)
-
-# Load danh sách UID hiện có
 def load_uids():
     return [os.path.splitext(f)[0] for f in os.listdir(FACE_FOLDER) if f.lower().endswith(".jpg")]
 
-# Hàm xóa UID
 def delete_uid(uid: str):
     path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
     if os.path.exists(path):
         os.remove(path)
+        # Xóa khỏi danh sách nhận diện
+        if uid in known_face_names:
+            idx = known_face_names.index(uid)
+            known_face_names.pop(idx)
+            known_face_encodings.pop(idx)
         return True
     return False
 
 @app.get("/upload_panel", response_class=HTMLResponse)
 async def upload_panel_get():
     uids = load_uids()
-    uid_list_html = "<ul>"
+    uid_list_html = "<ul>" if uids else "<p>Chưa có UID nào.</p>"
     for uid in uids:
         uid_list_html += f"""
         <li>{uid} 
@@ -94,7 +86,8 @@ async def upload_panel_get():
                 <button type="submit">Xóa</button>
             </form>
         </li>"""
-    uid_list_html += "</ul>" if uids else "<p>Chưa có UID nào.</p>"
+    if uids:
+        uid_list_html += "</ul>"
 
     html = f"""
     <h2>Upload Face Data</h2>
@@ -103,10 +96,10 @@ async def upload_panel_get():
         <input type="password" name="password" required><br><br>
 
         <label>UID (Tên người):</label><br>
-        <input type="text" name="uid" required><br><br>
+        <input type="text" name="uid"><br><br>
 
         <label>Chọn ảnh JPG:</label><br>
-        <input type="file" name="file" required><br><br>
+        <input type="file" name="file"><br><br>
 
         <button type="submit">Upload</button>
     </form>
@@ -121,16 +114,16 @@ async def upload_panel_post(
     password: str = Form(...),
     uid: str = Form(None),
     file: UploadFile = File(None),
-    delete_uid_field: str = Form(None)
+    delete_uid: str = Form(None)
 ):
     # Xác thực password
     if password != UPLOAD_PASSWORD:
         raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
 
     # Xử lý xóa UID
-    if delete_uid_field:
-        success = delete_uid(delete_uid_field)
-        return HTMLResponse(f"{'✅ Đã xóa UID: ' + delete_uid_field if success else '❌ Không tìm thấy UID'}<br><a href='/upload_panel'>⬅ Quay lại</a>")
+    if delete_uid:
+        success = delete_uid(delete_uid)
+        return HTMLResponse(f"{'✅ Đã xóa UID: ' + delete_uid if success else '❌ Không tìm thấy UID'}<br><a href='/upload_panel'>⬅ Quay lại</a>")
 
     # Xử lý upload
     if not uid or not file:
@@ -143,8 +136,19 @@ async def upload_panel_post(
     with open(save_path, "wb") as f:
         f.write(await file.read())
 
-    # Reload danh sách UID
+    # Cập nhật trực tiếp danh sách nhận diện
+    try:
+        image = face_recognition.load_image_file(save_path)
+        encodings = face_recognition.face_encodings(image)
+        if encodings:
+            known_face_encodings.append(encodings[0])
+            known_face_names.append(uid)
+    except:
+        pass
+
     return HTMLResponse(f"✅ Upload thành công: {uid}<br><a href='/upload_panel'>⬅ Quay lại</a>")
+
+# ================================
 # GALLERY
 # ================================
 @app.get("/gallery", response_class=HTMLResponse)
@@ -180,7 +184,6 @@ async def recognize_face(request: Request):
     face_details_for_log = []
 
     try:
-        # 1. Nhận dữ liệu ảnh
         image_bytes = await request.body()
         if len(image_bytes) == 0:
             return PlainTextResponse(content="no", status_code=400)
@@ -222,7 +225,6 @@ async def recognize_face(request: Request):
                 "match": bool(best_distance < THRESHOLD)
             })
 
-        # Ghi log
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "result_sent": final_result,
@@ -246,7 +248,7 @@ async def recognize_face(request: Request):
 async def root():
     return {
         "status": "online",
-        "version": "2.2",
+        "version": "2.3",
         "known_faces_count": len(known_face_names),
         "known_names": known_face_names,
         "upload_panel": "/upload_panel",
