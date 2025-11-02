@@ -5,256 +5,138 @@ import face_recognition
 import numpy as np
 from datetime import datetime
 import json
-from fastapi import FastAPI, Request, UploadFile
+from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
-from fastapi import Form, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-import shutil
-from fastapi import Form, UploadFile, HTTPException
-from fastapi.responses import JSONResponse
-import shutil
-app = FastAPI(title="SmartDoor Face Recognition API")
+
+app = FastAPI()
 
 # ================================
 # Cấu hình thư mục
 # ================================
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 FACE_FOLDER = os.path.join(BASE_DIR, "face_data")
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 LOG_FOLDER = os.path.join(BASE_DIR, "logs")
-TEMPLATE_FOLDER = os.path.join(BASE_DIR, "templates")
 
-for folder in [FACE_FOLDER, UPLOAD_FOLDER, LOG_FOLDER, TEMPLATE_FOLDER]:
-    os.makedirs(folder, exist_ok=True)
+# Tự động tạo thư mục nếu chưa có
+os.makedirs(FACE_FOLDER, exist_ok=True)
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+os.makedirs(LOG_FOLDER, exist_ok=True)
 
-# Static files
+# Mount thư mục static cho ảnh upload
 app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
-templates = Jinja2Templates(directory=TEMPLATE_FOLDER)
 
 # ================================
-# Tải khuôn mặt
+# Tải khuôn mặt đã lưu
 # ================================
 known_face_encodings = []
 known_face_names = []
 
+print("=" * 60)
+print(f"[INFO] Loading known faces from: {FACE_FOLDER}")
+print("=" * 60)
 
-def load_known_faces():
-    global known_face_encodings, known_face_names
-    known_face_encodings.clear()
-    known_face_names.clear()
-
-    print("=" * 50)
-    print(f"[INFO] Loading known faces from: {FACE_FOLDER}")
-    print("=" * 50)
-
-    for file in os.listdir(FACE_FOLDER):
-        if not file.lower().endswith((".jpg", ".jpeg", ".png")):
-            continue
-
-        path = os.path.join(FACE_FOLDER, file)
+for file in os.listdir(FACE_FOLDER):
+    path = os.path.join(FACE_FOLDER, file)
+    if file.lower().endswith((".jpg", ".jpeg", ".png")):
         try:
+            image = face_recognition.load_image_file(path)
+            encodings = face_recognition.face_encodings(image)
+            
+            if encodings:
+                known_face_encodings.append(encodings[0])
+                name = os.path.splitext(file)[0]
+                known_face_names.append(name)
+                print(f"   ✓ Loaded: {name}")
+            else:
+                print(f"   ✗ No face found in: {file}")
+        except Exception as e:
+            print(f"   ✗ Error loading {file}: {str(e)}")
+
+print("=" * 60)
+print(f"[INFO] Total faces loaded: {len(known_face_names)}")
+if len(known_face_names) > 0:
+    print(f"[INFO] Names: {', '.join(known_face_names)}")
+else:
+     print("⚠ WARNING: No faces loaded! Add images to 'face_data' folder.")
+print("=" * 60 + "\n")
+
+# ================================
+# UPLOAD PANEL
+# ================================
+UPLOAD_PASSWORD = "123456"  # Mật khẩu truy cập upload panel
+
+html_form = """
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Upload Face Data</title>
+</head>
+<body>
+    <h2>Upload Face Data</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <label>Password:</label><br>
+        <input type="password" name="password"><br><br>
+
+        <label>UID (Tên người):</label><br>
+        <input type="text" name="uid"><br><br>
+
+        <label>Chọn ảnh JPG:</label><br>
+        <input type="file" name="file"><br><br>
+
+        <button type="submit">Upload</button>
+    </form>
+</body>
+</html>
+"""
+
+@app.get("/upload_panel", response_class=HTMLResponse)
+async def upload_panel_get():
+    return HTMLResponse(html_form)
+
+@app.post("/upload_panel", response_class=HTMLResponse)
+async def upload_panel_post(
+    password: str = Form(...),
+    uid: str = Form(...),
+    file: UploadFile = File(...)
+):
+    if password != UPLOAD_PASSWORD:
+        raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
+    
+    if not uid or not file:
+        raise HTTPException(status_code=400, detail="❌ Thiếu UID hoặc file")
+    
+    if not file.filename.lower().endswith(".jpg"):
+        raise HTTPException(status_code=400, detail="❌ Chỉ hỗ trợ file .jpg")
+    
+    save_path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
+    with open(save_path, "wb") as f:
+        f.write(await file.read())
+    
+    # Reload dữ liệu khuôn mặt
+    global known_face_encodings, known_face_names
+    known_face_encodings = []
+    known_face_names = []
+    for file_name in os.listdir(FACE_FOLDER):
+        path = os.path.join(FACE_FOLDER, file_name)
+        if file_name.lower().endswith(".jpg"):
             image = face_recognition.load_image_file(path)
             encodings = face_recognition.face_encodings(image)
             if encodings:
                 known_face_encodings.append(encodings[0])
-                known_face_names.append(os.path.splitext(file)[0])
-                print(f"   ✓ Loaded: {file}")
-            else:
-                print(f"   ✗ No face in: {file}")
-        except Exception as e:
-            print(f"   ✗ Error loading {file}: {e}")
-
-    print(f"[INFO] Total faces loaded: {len(known_face_names)}")
-    print("=" * 50)
-
-
-load_known_faces()
-@app.post("/upload_panel_browser")
-async def upload_panel_post(
-    uid: str = Form(...),
-    password: str = Form(...),
-    file: UploadFile = Form(...)
-):
-    """
-    Nhận file upload từ browser hoặc Blynk
-    """
-    UPLOAD_PANEL_PASSWORD = "123456"
-
-    # 1️⃣ Kiểm tra mật khẩu
-    if password != UPLOAD_PANEL_PASSWORD:
-        raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
-
-    # 2️⃣ Kiểm tra định dạng file
-    if not file.filename.lower().endswith(".jpg"):
-        raise HTTPException(status_code=400, detail="❌ Chỉ hỗ trợ file .jpg")
-
-    # 3️⃣ Lưu file vào FACE_FOLDER
-    save_path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
-    with open(save_path, "wb") as f:
-        shutil.copyfileobj(file.file, f)
-
-    # 4️⃣ Reload dữ liệu khuôn mặt
-    load_known_faces()
-
-    # 5️⃣ Trả kết quả
-    return HTMLResponse(f"""
-    <h3>✅ Upload thành công!</h3>
-    <p>UID: {uid}</p>
-    <p>Ảnh đã lưu tại: {save_path}</p>
-    <a href="/upload_panel_browser">⬅ Quay lại upload</a>
-    """)
-# ============================================================
-# ✅ LOG SERIAL TỪ ESP32 — API /logs
-# ============================================================
-
-
-logs = []  # lưu 5000 dòng
-
-
-@app.post("/logs")
-async def logs_post(request: Request):
-    """
-    ESP32 gửi log vào đây bằng JSON:
-    {"log": "nội dung log"}
-    """
-    global logs
-    data = await request.json()
-    line = data.get("log")
-
-    if line:
-        logs.append(line)
-        if len(logs) > 5000:
-            logs = logs[-5000:]
-
-    return JSONResponse({"status": "ok"})
-
-
-@app.get("/logs")
-async def logs_get():
-    """Trả log dạng JSON"""
-    return JSONResponse({"logs": logs})
-
-
-@app.get("/logs/text")
-async def logs_text():
-    """Trả log dạng text giống Serial Monitor"""
-    return PlainTextResponse("\n".join(logs))
-
+                known_face_names.append(os.path.splitext(file_name)[0])
+    
+    return HTMLResponse(f"✅ Thành công!<br>Ảnh đã lưu tại: {save_path}<br><br><a href='/gallery'>Xem Gallery</a>")
 
 # ================================
-# Trang upload ảnh web
-# ================================
-@app.get("/upload", response_class=HTMLResponse)
-async def upload_page(request: Request):
-    return templates.TemplateResponse("upload.html", {"request": request})
-
-
-@app.post("/upload", response_class=HTMLResponse)
-async def upload_image(request: Request, file: UploadFile):
-    try:
-        content = await file.read()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_{file.filename}")
-
-        with open(image_path, "wb") as f:
-            f.write(content)
-
-        nparr = np.frombuffer(content, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return HTMLResponse("<h3>Không thể đọc ảnh</h3>")
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb)
-
-        matched_name, confidence, result = "Unknown", 0, "no"
-
-        if encodings and known_face_encodings:
-            distances = face_recognition.face_distance(known_face_encodings, encodings[0])
-            best_match = np.argmin(distances)
-            best_distance = distances[best_match]
-            if best_distance < 0.5:
-                matched_name = known_face_names[best_match]
-                confidence = (1 - best_distance) * 100
-                result = "yes"
-
-        image_url = f"/uploads/{os.path.basename(image_path)}"
-        return templates.TemplateResponse("result.html", {
-            "request": request,
-            "result": result,
-            "name": matched_name,
-            "confidence": round(confidence, 2),
-            "image_url": image_url,
-            "time": datetime.now().strftime("%H:%M:%S %d/%m/%Y")
-        })
-
-    except Exception as e:
-        return HTMLResponse(f"<h3>Error: {str(e)}</h3>")
-
-
-# ================================
-# API ESP32 gửi ảnh nhận diện
-# ================================
-@app.post("/recognize")
-async def recognize_face(request: Request):
-    try:
-        image_bytes = await request.body()
-        if not image_bytes:
-            return PlainTextResponse("no")
-
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return PlainTextResponse("no")
-
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        image_name = f"{timestamp}.jpg"
-        image_path = os.path.join(UPLOAD_FOLDER, image_name)
-        cv2.imwrite(image_path, frame)
-
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        encodings = face_recognition.face_encodings(rgb)
-
-        result = "no"
-        matched_name, confidence = None, 0
-
-        if encodings and known_face_encodings:
-            distances = face_recognition.face_distance(known_face_encodings, encodings[0])
-            best_match = np.argmin(distances)
-            best_distance = distances[best_match]
-
-            if best_distance < 0.5:
-                matched_name = known_face_names[best_match]
-                confidence = (1 - best_distance) * 100
-                result = "yes"
-
-        log_entry = {
-            "timestamp": datetime.now().isoformat(),
-            "result": result,
-            "name": matched_name,
-            "confidence": round(confidence, 2),
-            "image": f"/uploads/{image_name}"
-        }
-
-        with open(os.path.join(LOG_FOLDER, "recognition_log.jsonl"), "a", encoding="utf-8") as log:
-            log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
-
-        return PlainTextResponse(result)
-
-    except Exception:
-        return PlainTextResponse("no")
-
-
-# ================================
-# Gallery ảnh
+# GALLERY
 # ================================
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery():
     files = sorted(os.listdir(UPLOAD_FOLDER), reverse=True)
     images_html = ""
-
     for f in files:
         if f.lower().endswith((".jpg", ".jpeg", ".png")):
             url = f"/uploads/{f}"
@@ -264,29 +146,102 @@ async def gallery():
                 <p>{f}</p>
             </div>
             """
-
     return HTMLResponse(f"""
     <html>
       <head><title>Gallery</title></head>
       <body style='font-family:Arial;text-align:center;padding:30px;'>
         <h2>📸 Ảnh đã upload</h2>
         {images_html or '<p>Chưa có ảnh nào.</p>'}
-        <br><a href="/upload">⬅ Quay lại upload</a>
+        <br><a href="/upload_panel">⬅ Quay lại upload</a>
       </body>
     </html>
     """)
 
+# ================================
+# NHẬN DIỆN KHUÔN MẶT
+# ================================
+@app.post("/recognize")
+async def recognize_face(request: Request):
+    final_result = "no"
+    face_details_for_log = []
 
+    try:
+        # 1. Nhận dữ liệu ảnh
+        image_bytes = await request.body()
+        if len(image_bytes) == 0:
+            return PlainTextResponse(content="no", status_code=400)
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return PlainTextResponse(content="no", status_code=400)
+
+        image_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_raw.jpg")
+        cv2.imwrite(image_path, frame)
+
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        face_locations = face_recognition.face_locations(rgb, model="hog")
+        face_encodings = face_recognition.face_encodings(rgb, face_locations)
+
+        if len(face_locations) == 0 or len(known_face_encodings) == 0:
+            return PlainTextResponse(content="no")
+
+        THRESHOLD = 0.5
+        for i, face_encoding in enumerate(face_encodings):
+            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
+            best_match_index = np.argmin(face_distances)
+            best_distance = float(face_distances[best_match_index])
+
+            name = "Unknown"
+            confidence = 0.0
+            if best_distance < THRESHOLD:
+                name = known_face_names[best_match_index]
+                confidence = (1 - best_distance) * 100
+                final_result = "yes"
+
+            face_details_for_log.append({
+                "name": name,
+                "confidence": round(float(confidence), 2),
+                "distance": round(float(best_distance), 4),
+                "threshold": float(THRESHOLD),
+                "match": bool(best_distance < THRESHOLD)
+            })
+
+        # Ghi log
+        log_entry = {
+            "timestamp": datetime.now().isoformat(),
+            "result_sent": final_result,
+            "face_count": len(face_locations),
+            "faces_detail": face_details_for_log,
+            "image_path": image_path,
+        }
+        detail_log_path = os.path.join(LOG_FOLDER, "recognition_log.jsonl")
+        with open(detail_log_path, "a", encoding="utf-8") as log:
+            log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+
+        return PlainTextResponse(content=final_result)
+
+    except Exception as e:
+        return PlainTextResponse(content="no", status_code=500)
+
+# ================================
+# KIỂM TRA TRẠNG THÁI SERVER
+# ================================
 @app.get("/")
 async def root():
     return {
         "status": "online",
+        "version": "2.2",
         "known_faces_count": len(known_face_names),
         "known_names": known_face_names,
-        "upload_page": "/upload",
-        "docs": "/docs"
+        "upload_panel": "/upload_panel",
+        "gallery": "/gallery",
+        "endpoint_docs": "/docs"
     }
 
-
+# ================================
+# CHẠY SERVER
+# ================================
 if __name__ == "__main__":
-    uvicorn.run("main:app", host="0.0.0.0", port=int(os.getenv("PORT", 5000)))
+    uvicorn.run(app, host="0.0.0.0", port=5000)
