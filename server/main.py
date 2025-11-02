@@ -65,11 +65,13 @@ def delete_uid(uid: str):
     path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
     if os.path.exists(path):
         os.remove(path)
-        # Xóa khỏi danh sách nhận diện
-        if uid in known_face_names:
+        # Xóa khỏi danh sách nhận diện nếu tồn tại
+        try:
             idx = known_face_names.index(uid)
             known_face_names.pop(idx)
             known_face_encodings.pop(idx)
+        except ValueError:
+            pass
         return True
     return False
 
