@@ -65,8 +65,6 @@ print("=" * 60 + "\n")
 
 # ================================
 # UPLOAD PANEL
-# ================================
-FACE_FOLDER = "face_data"
 UPLOAD_PASSWORD = "123456"
 
 os.makedirs(FACE_FOLDER, exist_ok=True)
