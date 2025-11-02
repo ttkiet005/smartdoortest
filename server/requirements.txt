@@ -5,3 +5,4 @@ face_recognition
 numpy
 opencv-python-headless
 jinja2
+Flask==3.0.2
