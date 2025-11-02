@@ -66,71 +66,87 @@ print("=" * 60 + "\n")
 # ================================
 # UPLOAD PANEL
 # ================================
-UPLOAD_PASSWORD = "123456"  # Mật khẩu truy cập upload panel
+FACE_FOLDER = "face_data"
+UPLOAD_PASSWORD = "123456"
 
-html_form = """
-<!DOCTYPE html>
-<html>
-<head>
-    <title>Upload Face Data</title>
-</head>
-<body>
-    <h2>Upload Face Data</h2>
-    <form method="POST" enctype="multipart/form-data">
-        <label>Password:</label><br>
-        <input type="password" name="password"><br><br>
+os.makedirs(FACE_FOLDER, exist_ok=True)
 
-        <label>UID (Tên người):</label><br>
-        <input type="text" name="uid"><br><br>
+# Load danh sách UID hiện có
+def load_uids():
+    return [os.path.splitext(f)[0] for f in os.listdir(FACE_FOLDER) if f.lower().endswith(".jpg")]
 
-        <label>Chọn ảnh JPG:</label><br>
-        <input type="file" name="file"><br><br>
-
-        <button type="submit">Upload</button>
-    </form>
-</body>
-</html>
-"""
+# Hàm xóa UID
+def delete_uid(uid: str):
+    path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
+    if os.path.exists(path):
+        os.remove(path)
+        return True
+    return False
 
 @app.get("/upload_panel", response_class=HTMLResponse)
 async def upload_panel_get():
-    return HTMLResponse(html_form)
+    uids = load_uids()
+    uid_list_html = "<ul>"
+    for uid in uids:
+        uid_list_html += f"""
+        <li>{uid} 
+            <form method="POST" style="display:inline-block;">
+                <input type="hidden" name="delete_uid" value="{uid}">
+                <input type="password" name="password" placeholder="Password" required>
+                <button type="submit">Xóa</button>
+            </form>
+        </li>"""
+    uid_list_html += "</ul>" if uids else "<p>Chưa có UID nào.</p>"
+
+    html = f"""
+    <h2>Upload Face Data</h2>
+    <form method="POST" enctype="multipart/form-data">
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br><br>
+
+        <label>UID (Tên người):</label><br>
+        <input type="text" name="uid" required><br><br>
+
+        <label>Chọn ảnh JPG:</label><br>
+        <input type="file" name="file" required><br><br>
+
+        <button type="submit">Upload</button>
+    </form>
+    <hr>
+    <h3>Danh sách UID hiện có</h3>
+    {uid_list_html}
+    """
+    return HTMLResponse(html)
 
 @app.post("/upload_panel", response_class=HTMLResponse)
 async def upload_panel_post(
     password: str = Form(...),
-    uid: str = Form(...),
-    file: UploadFile = File(...)
+    uid: str = Form(None),
+    file: UploadFile = File(None),
+    delete_uid_field: str = Form(None)
 ):
+    # Xác thực password
     if password != UPLOAD_PASSWORD:
         raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
-    
+
+    # Xử lý xóa UID
+    if delete_uid_field:
+        success = delete_uid(delete_uid_field)
+        return HTMLResponse(f"{'✅ Đã xóa UID: ' + delete_uid_field if success else '❌ Không tìm thấy UID'}<br><a href='/upload_panel'>⬅ Quay lại</a>")
+
+    # Xử lý upload
     if not uid or not file:
         raise HTTPException(status_code=400, detail="❌ Thiếu UID hoặc file")
-    
+
     if not file.filename.lower().endswith(".jpg"):
         raise HTTPException(status_code=400, detail="❌ Chỉ hỗ trợ file .jpg")
-    
+
     save_path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
     with open(save_path, "wb") as f:
         f.write(await file.read())
-    
-    # Reload dữ liệu khuôn mặt
-    global known_face_encodings, known_face_names
-    known_face_encodings = []
-    known_face_names = []
-    for file_name in os.listdir(FACE_FOLDER):
-        path = os.path.join(FACE_FOLDER, file_name)
-        if file_name.lower().endswith(".jpg"):
-            image = face_recognition.load_image_file(path)
-            encodings = face_recognition.face_encodings(image)
-            if encodings:
-                known_face_encodings.append(encodings[0])
-                known_face_names.append(os.path.splitext(file_name)[0])
-    
-    return HTMLResponse(f"✅ Thành công!<br>Ảnh đã lưu tại: {save_path}<br><br><a href='/gallery'>Xem Gallery</a>")
 
-# ================================
+    # Reload danh sách UID
+    return HTMLResponse(f"✅ Upload thành công: {uid}<br><a href='/upload_panel'>⬅ Quay lại</a>")
 # GALLERY
 # ================================
 @app.get("/gallery", response_class=HTMLResponse)
