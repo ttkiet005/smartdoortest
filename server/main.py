@@ -11,26 +11,18 @@ from fastapi.staticfiles import StaticFiles
 
 app = FastAPI()
 
-# ================================
-# Cấu hình thư mục
-# ================================
+# Thư mục
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 FACE_FOLDER = os.path.join(BASE_DIR, "face_data")
 UPLOAD_FOLDER = os.path.join(BASE_DIR, "uploads")
 LOG_FOLDER = os.path.join(BASE_DIR, "logs")
-
-# Tạo thư mục nếu chưa có
 os.makedirs(FACE_FOLDER, exist_ok=True)
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 os.makedirs(LOG_FOLDER, exist_ok=True)
 
-# Mount thư mục static cho ảnh upload
 app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 
-# ================================
-# Tải khuôn mặt đã lưu
-# ================================
+# Danh sách nhận diện
 known_face_encodings = []
 known_face_names = []
 
@@ -38,10 +30,9 @@ def load_known_faces():
     global known_face_encodings, known_face_names
     known_face_encodings = []
     known_face_names = []
-
     for file in os.listdir(FACE_FOLDER):
-        path = os.path.join(FACE_FOLDER, file)
         if file.lower().endswith(".jpg"):
+            path = os.path.join(FACE_FOLDER, file)
             try:
                 image = face_recognition.load_image_file(path)
                 encodings = face_recognition.face_encodings(image)
@@ -53,19 +44,15 @@ def load_known_faces():
 
 load_known_faces()
 
-# ================================
-# UPLOAD PANEL
-# ================================
 UPLOAD_PASSWORD = "123456"
 
 def load_uids():
     return [os.path.splitext(f)[0] for f in os.listdir(FACE_FOLDER) if f.lower().endswith(".jpg")]
 
-def delete_uid(uid: str):
+def delete_uid_file(uid: str):
     path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
     if os.path.exists(path):
         os.remove(path)
-        # Xóa khỏi danh sách nhận diện nếu có
         try:
             idx = known_face_names.index(uid)
             known_face_names.pop(idx)
@@ -75,14 +62,17 @@ def delete_uid(uid: str):
         return True
     return False
 
+# ====================
+# Upload panel
+# ====================
 @app.get("/upload_panel", response_class=HTMLResponse)
 async def upload_panel_get():
     uids = load_uids()
     uid_list_html = "<ul>" if uids else "<p>Chưa có UID nào.</p>"
     for uid in uids:
         uid_list_html += f"""
-        <li>{uid} 
-            <form method="POST" style="display:inline-block;">
+        <li>{uid}
+            <form method="POST" action="/upload_panel/delete" style="display:inline-block;">
                 <input type="hidden" name="delete_uid" value="{uid}">
                 <input type="password" name="password" placeholder="Password" required>
                 <button type="submit">Xóa</button>
@@ -93,15 +83,15 @@ async def upload_panel_get():
 
     html = f"""
     <h2>Upload Face Data</h2>
-    <form method="POST" enctype="multipart/form-data">
+    <form method="POST" action="/upload_panel/upload" enctype="multipart/form-data">
         <label>Password:</label><br>
         <input type="password" name="password" required><br><br>
 
         <label>UID (Tên người):</label><br>
-        <input type="text" name="uid"><br><br>
+        <input type="text" name="uid" required><br><br>
 
         <label>Chọn ảnh JPG:</label><br>
-        <input type="file" name="file"><br><br>
+        <input type="file" name="file" required><br><br>
 
         <button type="submit">Upload</button>
     </form>
@@ -111,53 +101,50 @@ async def upload_panel_get():
     """
     return HTMLResponse(html)
 
-@app.post("/upload_panel", response_class=HTMLResponse)
-async def upload_panel_post(
+# ====================
+# POST upload
+# ====================
+@app.post("/upload_panel/upload", response_class=HTMLResponse)
+async def upload_face(
     password: str = Form(...),
-    uid: str = Form(None),
-    file: UploadFile = File(None),
-    delete_uid: str = Form(None)
+    uid: str = Form(...),
+    file: UploadFile = File(...)
 ):
-    # Xác thực password
     if password != UPLOAD_PASSWORD:
         raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
 
-    # ======================
-    # Xử lý xóa UID
-    # ======================
-    if delete_uid:
-        success = delete_uid(delete_uid)
-        return HTMLResponse(f"{'✅ Đã xóa UID: ' + delete_uid if success else '❌ Không tìm thấy UID'}<br><a href='/upload_panel'>⬅ Quay lại</a>")
+    if not file.filename.lower().endswith(".jpg"):
+        raise HTTPException(status_code=400, detail="❌ Chỉ hỗ trợ file .jpg")
 
-    # ======================
-    # Xử lý upload
-    # ======================
-    if uid and file:
-        if not file.filename.lower().endswith(".jpg"):
-            raise HTTPException(status_code=400, detail="❌ Chỉ hỗ trợ file .jpg")
+    save_path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
+    with open(save_path, "wb") as f:
+        f.write(await file.read())
 
-        save_path = os.path.join(FACE_FOLDER, f"{uid}.jpg")
-        with open(save_path, "wb") as f:
-            f.write(await file.read())
+    try:
+        image = face_recognition.load_image_file(save_path)
+        encodings = face_recognition.face_encodings(image)
+        if encodings:
+            known_face_encodings.append(encodings[0])
+            known_face_names.append(uid)
+    except:
+        pass
 
-        # Cập nhật trực tiếp danh sách nhận diện
-        try:
-            image = face_recognition.load_image_file(save_path)
-            encodings = face_recognition.face_encodings(image)
-            if encodings:
-                known_face_encodings.append(encodings[0])
-                known_face_names.append(uid)
-        except:
-            pass
+    return HTMLResponse(f"✅ Upload thành công: {uid}<br><a href='/upload_panel'>⬅ Quay lại</a>")
 
-        return HTMLResponse(f"✅ Upload thành công: {uid}<br><a href='/upload_panel'>⬅ Quay lại</a>")
+# ====================
+# POST delete
+# ====================
+@app.post("/upload_panel/delete", response_class=HTMLResponse)
+async def delete_face(password: str = Form(...), delete_uid: str = Form(...)):
+    if password != UPLOAD_PASSWORD:
+        raise HTTPException(status_code=403, detail="❌ Sai mật khẩu")
 
-    # Nếu không phải xóa và không đủ dữ liệu upload
-    raise HTTPException(status_code=400, detail="❌ Thiếu dữ liệu upload hoặc xóa UID")
+    success = delete_uid_file(delete_uid)
+    return HTMLResponse(f"{'✅ Đã xóa UID: ' + delete_uid if success else '❌ Không tìm thấy UID'}<br><a href='/upload_panel'>⬅ Quay lại</a>")
 
-# ================================
-# GALLERY
-# ================================
+# ====================
+# Gallery
+# ====================
 @app.get("/gallery", response_class=HTMLResponse)
 async def gallery():
     files = sorted(os.listdir(UPLOAD_FOLDER), reverse=True)
@@ -182,14 +169,13 @@ async def gallery():
     </html>
     """)
 
-# ================================
-# NHẬN DIỆN KHUÔN MẶT
-# ================================
+# ====================
+# Nhận diện khuôn mặt
+# ====================
 @app.post("/recognize")
 async def recognize_face(request: Request):
     final_result = "no"
     face_details_for_log = []
-
     try:
         image_bytes = await request.body()
         if len(image_bytes) == 0:
@@ -244,18 +230,17 @@ async def recognize_face(request: Request):
             log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
 
         return PlainTextResponse(content=final_result)
-
-    except Exception as e:
+    except:
         return PlainTextResponse(content="no", status_code=500)
 
-# ================================
-# KIỂM TRA TRẠNG THÁI SERVER
-# ================================
+# ====================
+# Root
+# ====================
 @app.get("/")
 async def root():
     return {
         "status": "online",
-        "version": "2.4",
+        "version": "2.5",
         "known_faces_count": len(known_face_names),
         "known_names": known_face_names,
         "upload_panel": "/upload_panel",
@@ -263,8 +248,5 @@ async def root():
         "endpoint_docs": "/docs"
     }
 
-# ================================
-# CHẠY SERVER
-# ================================
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=5000)
