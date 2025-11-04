@@ -8,7 +8,10 @@ import json
 from fastapi import FastAPI, Request, UploadFile, Form, File, HTTPException
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-
+import time
+import socket
+from typing import Optional
+from fastapi import Header, Query
 app = FastAPI()
 
 # Thư mục
@@ -22,9 +25,60 @@ os.makedirs(LOG_FOLDER, exist_ok=True)
 
 app.mount("/uploads", StaticFiles(directory=UPLOAD_FOLDER), name="uploads")
 app.mount("/face_data", StaticFiles(directory=FACE_FOLDER), name="face_data")
+
+uid_encoding_cache = {}  # { uid: encoding }
+active_sessions = {}     # { uid: {"status": "pending"/"yess"/"noo", "ts": epoch_seconds} }
+SESSION_TTL_SEC = 45
+THRESHOLD = 0.50  # Ngưỡng khớp mặt (giữ nguyên yêu cầu của bạn)
+
 # Danh sách nhận diện
 known_face_encodings = []
 known_face_names = []
+
+def now_ts() -> int:
+    return int(time.time())
+
+def cleanup_sessions():
+    expired = [uid for uid, s in active_sessions.items() if now_ts() - s["ts"] > SESSION_TTL_SEC]
+    for uid in expired:
+        del active_sessions[uid]
+
+def find_uid_image_path(uid: str) -> Optional[str]:
+    targets = [f"{uid}.jpg", f"{uid}.jpeg", f"{uid}.png"]
+    lower_targets = {t.lower() for t in targets}
+    for fn in os.listdir(FACE_FOLDER):
+        if fn.lower() in lower_targets:
+            return os.path.join(FACE_FOLDER, fn)
+    return None
+
+def load_uid_encoding(uid: str):
+    """Đọc/đệm encoding cho UID."""
+    if uid in uid_encoding_cache:
+        return uid_encoding_cache[uid]
+    path = find_uid_image_path(uid)
+    if not path:
+        return None
+    try:
+        img = face_recognition.load_image_file(path)
+        encs = face_recognition.face_encodings(img)
+        if not encs:
+            return None
+        uid_encoding_cache[uid] = encs[0]
+        return encs[0]
+    except Exception:
+        return None
+
+def get_local_ip():
+    s=None
+    try:
+        s=socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8', 80))
+        ip=s.getsockname()[0]
+    except Exception:
+        ip='127.0.0.1'
+    finally:
+        if s: s.close()
+    return ip
 
 def load_known_faces():
     global known_face_encodings, known_face_names
@@ -362,70 +416,142 @@ async def update_wifi(
         Password: {password}<br><br>
         <a href="/wifi_panel">Quay lại</a>
     """)
+@app.post("/precheck")
+async def precheck_uid(request: Request):
+    cleanup_sessions()
+    try:
+        payload = await request.json()
+        uid = str(payload.get("uid", "")).strip()
+    except Exception:
+        return PlainTextResponse("no", status_code=400)
+
+    if not uid:
+        return PlainTextResponse("no", status_code=400)
+
+    enc = load_uid_encoding(uid)
+    if enc is None:
+        return PlainTextResponse("no")
+
+    # tạo/refresh session
+    active_sessions[uid] = {"status": "pending", "ts": now_ts()}
+    return PlainTextResponse("yes")
+
+# ==========================================
+# 2) GET RESULT (ESP32-DEV poll)
+# /result?uid=XXXX  ->  "pending" | "yess" | "noo" | "no"
+# ==========================================
+@app.get("/result")
+async def get_result(uid: str = Query(...)):
+    cleanup_sessions()
+    s = active_sessions.get(uid)
+    if not s:
+        return PlainTextResponse("no")
+    s["ts"] = now_ts()
+    return PlainTextResponse(s["status"])
 
 # ====================
 # Nhận diện khuôn mặt
 # ====================
 @app.post("/recognize")
-async def recognize_face(request: Request):
-    final_result = "no"
-    face_details_for_log = []
-    try:
-        image_bytes = await request.body()
-        if len(image_bytes) == 0:
-            return PlainTextResponse(content="no", status_code=400)
+async def recognize_face(request: Request,
+                         x_uid: Optional[str] = Header(default=None),
+                         x_last_frame: Optional[str] = Header(default=None)):
+    cleanup_sessions()
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if frame is None:
-            return PlainTextResponse(content="no", status_code=400)
+    image_bytes = await request.body()
+    if not image_bytes:
+        return PlainTextResponse("pending", status_code=400)
 
-        image_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_raw.jpg")
-        cv2.imwrite(image_path, frame)
+    # Xác định UID cho phiên này
+    uid = None
+    if x_uid:
+        uid = x_uid.strip()
+    else:
+        if active_sessions:
+            # lấy session mới nhất (phù hợp 1 cửa/1 lượt)
+            uid = max(active_sessions.items(), key=lambda kv: kv[1]["ts"])[0]
 
-        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        face_locations = face_recognition.face_locations(rgb, model="hog")
-        face_encodings = face_recognition.face_encodings(rgb, face_locations)
+    if not uid or uid not in active_sessions:
+        return PlainTextResponse("pending", status_code=428)
 
-        if len(face_locations) == 0 or len(known_face_encodings) == 0:
-            return PlainTextResponse(content="no")
+    # ✅ Early-exit: nếu đã kết thúc
+    if active_sessions[uid]["status"] in ("yess", "noo"):
+        active_sessions[uid]["ts"] = now_ts()
+        return PlainTextResponse(active_sessions[uid]["status"])
 
-        THRESHOLD = 0.5
-        for i, face_encoding in enumerate(face_encodings):
-            face_distances = face_recognition.face_distance(known_face_encodings, face_encoding)
-            best_match_index = np.argmin(face_distances)
-            best_distance = float(face_distances[best_match_index])
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if frame is None:
+        return PlainTextResponse("pending", status_code=400)
 
-            name = "Unknown"
-            confidence = 0.0
-            if best_distance < THRESHOLD:
-                name = known_face_names[best_match_index]
-                confidence = (1 - best_distance) * 100
-                final_result = "yes"
+    # Lưu ảnh để debug
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    raw_path = os.path.join(UPLOAD_FOLDER, f"{timestamp}_raw.jpg")
+    cv2.imwrite(raw_path, frame)
 
-            face_details_for_log.append({
-                "name": name,
-                "confidence": round(float(confidence), 2),
-                "distance": round(float(best_distance), 4),
-                "threshold": float(THRESHOLD),
-                "match": bool(best_distance < THRESHOLD)
-            })
+    enc_expected = load_uid_encoding(uid)
+    if enc_expected is None:
+        active_sessions[uid]["status"] = "noo"
+        active_sessions[uid]["ts"] = now_ts()
+        return PlainTextResponse("noo")
 
-        log_entry = {
+    is_last = (str(x_last_frame).strip() == "1")
+
+    # Tiền xử lý & detect
+    frame = cv2.convertScaleAbs(frame, alpha=1.2, beta=10)
+    rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    # upsample=1 giúp phát hiện mặt nhỏ tốt hơn một chút, vẫn nhanh
+    face_locations = face_recognition.face_locations(rgb, number_of_times_to_upsample=1, model="hog")
+    face_encodings = face_recognition.face_encodings(rgb, face_locations)
+
+    matched = False
+    best_distance = 1.0
+
+    if face_encodings:
+        # ====== TÍNH KHOẢNG CÁCH MỘT CÁCH AN TOÀN BẰNG NUMPY ======
+        enc_expected_np = np.asarray(enc_expected, dtype=np.float64)
+
+        # Vector hoá khi có nhiều khuôn mặt trong frame
+        try:
+            enc_mat = np.vstack([np.asarray(e, dtype=np.float64) for e in face_encodings])
+            # Euclid distance giữa từng enc trong frame và enc_expected
+            dists_np = np.linalg.norm(enc_mat - enc_expected_np, axis=1)
+            dists = dists_np.tolist()
+        except Exception:
+            # fallback từng cái (rất hiếm khi cần)
+            dists = []
+            for e in face_encodings:
+                e_np = np.asarray(e, dtype=np.float64)
+                dists.append(float(np.linalg.norm(e_np - enc_expected_np)))
+
+        if dists:
+            best_distance = min(dists)
+            matched = any(d < THRESHOLD for d in dists)
+
+    # Log ngắn gọn
+    with open(os.path.join(LOG_FOLDER, "recognition_log.jsonl"), "a", encoding="utf-8") as f:
+        f.write(json.dumps({
             "timestamp": datetime.now().isoformat(),
-            "result_sent": final_result,
+            "uid": uid,
+            "image_path": raw_path,
             "face_count": len(face_locations),
-            "faces_detail": face_details_for_log,
-            "image_path": image_path,
-        }
-        detail_log_path = os.path.join(LOG_FOLDER, "recognition_log.jsonl")
-        with open(detail_log_path, "a", encoding="utf-8") as log:
-            log.write(json.dumps(log_entry, ensure_ascii=False) + "\n")
+            "best_distance": round(best_distance, 4),
+            "threshold": THRESHOLD
+        }, ensure_ascii=False) + "\n")
 
-        return PlainTextResponse(content=final_result)
-    except:
-        return PlainTextResponse(content="no", status_code=500)
+    if matched:
+        active_sessions[uid]["status"] = "yess"
+        active_sessions[uid]["ts"] = now_ts()
+        return PlainTextResponse("yess")  # ✅ CAM dừng ngay
+    else:
+        if is_last:
+            active_sessions[uid]["status"] = "noo"
+            active_sessions[uid]["ts"] = now_ts()
+            return PlainTextResponse("noo")
+        else:
+            active_sessions[uid]["status"] = "pending"
+            active_sessions[uid]["ts"] = now_ts()
+            return PlainTextResponse("pending")
 
 # ====================
 # Root
