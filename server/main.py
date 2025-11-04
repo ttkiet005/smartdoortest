@@ -75,9 +75,16 @@ async def upload_panel_get():
     uid_rows = ""
     if uids:
         for uid in uids:
+            img_path = f"/face_data/{uid}.jpg"   # đường hiển thị ảnh
             uid_rows += f"""
             <tr>
                 <td>{uid}</td>
+
+                <td style="text-align:center;">
+                    <img src='{img_path}' width='80' height='80'
+                        style="object-fit:cover;border-radius:8px;border:1px solid #ccc;">
+                </td>
+
                 <td>
                     <form method="POST" action="/upload_panel/delete" class="delete-form">
                         <input type="hidden" name="delete_uid" value="{uid}">
@@ -88,7 +95,7 @@ async def upload_panel_get():
             </tr>
             """
     else:
-        uid_rows = "<tr><td colspan='2' style='text-align:center;'>Chưa có UID nào.</td></tr>"
+        uid_rows = "<tr><td colspan='3' style='text-align:center;'>Chưa có UID nào.</td></tr>"
 
     html = f"""
     <html>
@@ -101,7 +108,7 @@ async def upload_panel_get():
                 padding: 30px;
             }}
             .container {{
-                max-width: 750px;
+                max-width: 850px;
                 margin: auto;
                 background: white;
                 padding: 25px;
@@ -147,10 +154,10 @@ async def upload_panel_get():
             th, td {{
                 padding: 12px;
                 border-bottom: 1px solid #e5e5e5;
+                text-align: left;
             }}
 
             th {{
-                text-align: left;
                 background: #f0f0f0;
             }}
 
@@ -197,6 +204,7 @@ async def upload_panel_get():
             <table>
                 <tr>
                     <th>UID</th>
+                    <th>Ảnh</th>
                     <th>Hành động</th>
                 </tr>
                 {uid_rows}
