@@ -169,6 +169,87 @@ async def gallery():
     </html>
     """)
 
+
+# ================================
+#  WIFI CONFIG – LƯU VÀ LẤY CHO ESP32
+# ================================
+WIFI_CONFIG_FILE = os.path.join(BASE_DIR, "wifi.json")
+WIFI_PANEL_PASSWORD = "adminwifi"   # đổi tùy ý
+
+# Tạo file mặc định nếu chưa có
+if not os.path.exists(WIFI_CONFIG_FILE):
+    with open(WIFI_CONFIG_FILE, "w", encoding="utf8") as f:
+        json.dump({"ssid": "", "password": ""}, f, ensure_ascii=False)
+
+
+def load_wifi():
+    with open(WIFI_CONFIG_FILE, "r", encoding="utf8") as f:
+        return json.load(f)
+
+
+def save_wifi(ssid, password):
+    with open(WIFI_CONFIG_FILE, "w", encoding="utf8") as f:
+        json.dump({"ssid": ssid, "password": password}, f, ensure_ascii=False)
+
+
+# ================================
+# 1) API để ESP32 lấy WiFi
+# ================================
+@app.get("/wifi_config")
+async def get_wifi_config():
+    """
+    ESP32 gọi API này để lấy SSID + PASSWORD mới nhất
+    """
+    return load_wifi()
+
+
+# ================================
+# 2) WEB PANEL đổi WiFi (có mật khẩu)
+# ================================
+@app.get("/wifi_panel", response_class=HTMLResponse)
+async def wifi_panel():
+    wifi = load_wifi()
+    return f"""
+    <h2>WiFi Configuration</h2>
+
+    <form method="POST" action="/wifi_panel">
+        <label>Admin Password:</label><br>
+        <input type="password" name="admin_pw" required><br><br>
+
+        <label>WiFi SSID:</label><br>
+        <input type="text" name="ssid" value="{wifi['ssid']}" required><br><br>
+
+        <label>WiFi Password:</label><br>
+        <input type="text" name="password" value="{wifi['password']}" required><br><br>
+
+        <button type="submit">Update WiFi</button>
+    </form>
+
+    <hr>
+    <p><b>Current Saved WiFi:</b><br>
+    SSID: {wifi['ssid']}<br>
+    Password: {wifi['password']}</p>
+    """
+
+
+@app.post("/wifi_panel", response_class=HTMLResponse)
+async def update_wifi(
+    admin_pw: str = Form(...),
+    ssid: str = Form(...),
+    password: str = Form(...)
+):
+    if admin_pw != WIFI_PANEL_PASSWORD:
+        return HTMLResponse("❌ Sai mật khẩu Admin<br><a href='/wifi_panel'>Quay lại</a>")
+
+    save_wifi(ssid, password)
+
+    return HTMLResponse(f"""
+        ✅ WiFi đã cập nhật thành công!<br>
+        SSID: {ssid}<br>
+        Password: {password}<br><br>
+        <a href="/wifi_panel">Quay lại</a>
+    """)
+
 # ====================
 # Nhận diện khuôn mặt
 # ====================
