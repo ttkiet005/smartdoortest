@@ -71,147 +71,41 @@ def delete_uid_file(uid: str):
 @app.get("/upload_panel", response_class=HTMLResponse)
 async def upload_panel_get():
     uids = load_uids()
+    uid_list_html = "<ul>" if uids else "<p>Chưa có UID nào.</p>"
 
-    uid_rows = ""
+    for uid in uids:
+        uid_list_html += f"""
+        <li style='margin-bottom:20px;'>
+            <div style='display:flex; align-items:center;'>
+                <img src='/face_data/{uid}.jpg' width='80' style='border-radius:5px; margin-right:10px; border:1px solid #ccc'>
+                <span style='margin-right:10px;'>{uid}</span>
+                <form method="POST" action="/upload_panel/delete" style="display:inline-block;">
+                    <input type="hidden" name="delete_uid" value="{uid}">
+                    <input type="password" name="password" placeholder="Password" required>
+                    <button type="submit">Xóa</button>
+                </form>
+            </div>
+        </li>"""
     if uids:
-        for uid in uids:
-            img_path = f"/face_data/{uid}.jpg"   # đường hiển thị ảnh
-            uid_rows += f"""
-            <tr>
-                <td>{uid}</td>
-
-                <td style="text-align:center;">
-                    <img src='{img_path}' width='80' height='80'
-                        style="object-fit:cover;border-radius:8px;border:1px solid #ccc;">
-                </td>
-
-                <td>
-                    <form method="POST" action="/upload_panel/delete" class="delete-form">
-                        <input type="hidden" name="delete_uid" value="{uid}">
-                        <input type="password" name="password" placeholder="Password" class="pw-input" required>
-                        <button type="submit" class="delete-btn">Xóa</button>
-                    </form>
-                </td>
-            </tr>
-            """
-    else:
-        uid_rows = "<tr><td colspan='3' style='text-align:center;'>Chưa có UID nào.</td></tr>"
+        uid_list_html += "</ul>"
 
     html = f"""
-    <html>
-    <head>
-        <title>Upload Face Data</title>
-        <style>
-            body {{
-                font-family: Arial;
-                background: #f7f7f7;
-                padding: 30px;
-            }}
-            .container {{
-                max-width: 850px;
-                margin: auto;
-                background: white;
-                padding: 25px;
-                border-radius: 12px;
-                box-shadow: 0 3px 10px rgba(0,0,0,0.15);
-            }}
+    <h2>Upload Face Data</h2>
+    <form method="POST" action="/upload_panel/upload" enctype="multipart/form-data">
+        <label>Password:</label><br>
+        <input type="password" name="password" required><br><br>
 
-            h2 {{
-                color: #333;
-                margin-bottom: 10px;
-            }}
+        <label>UID (Tên người):</label><br>
+        <input type="text" name="uid" required><br><br>
 
-            input[type="text"], input[type="password"], input[type="file"] {{
-                width: 100%;
-                padding: 10px;
-                border-radius: 8px;
-                border: 1px solid #ccc;
-                margin-top: 5px;
-                margin-bottom: 15px;
-                font-size: 15px;
-            }}
+        <label>Chọn ảnh JPG:</label><br>
+        <input type="file" name="file" required><br><br>
 
-            button {{
-                padding: 10px 18px;
-                background: #0078ff;
-                border: none;
-                color: white;
-                font-size: 15px;
-                border-radius: 8px;
-                cursor: pointer;
-            }}
-
-            button:hover {{
-                background: #005fcc;
-            }}
-
-            table {{
-                width: 100%;
-                border-collapse: collapse;
-                margin-top: 20px;
-            }}
-
-            th, td {{
-                padding: 12px;
-                border-bottom: 1px solid #e5e5e5;
-                text-align: left;
-            }}
-
-            th {{
-                background: #f0f0f0;
-            }}
-
-            .delete-btn {{
-                background: #ff4444;
-            }}
-            .delete-btn:hover {{
-                background: #cc0000;
-            }}
-
-            .delete-form {{
-                display: flex;
-                gap: 8px;
-                align-items: center;
-            }}
-
-            .pw-input {{
-                width: 150px;
-            }}
-        </style>
-    </head>
-
-    <body>
-        <div class="container">
-            <h2>📤 Upload Face Data</h2>
-            
-            <form method="POST" action="/upload_panel/upload" enctype="multipart/form-data">
-                <label>Password:</label>
-                <input type="password" name="password" required>
-
-                <label>UID (Tên người):</label>
-                <input type="text" name="uid" required>
-
-                <label>Chọn ảnh JPG:</label>
-                <input type="file" name="file" required>
-
-                <button type="submit">Upload</button>
-            </form>
-
-            <hr style="margin: 30px 0;">
-
-            <h3>📋 Danh sách UID hiện có</h3>
-
-            <table>
-                <tr>
-                    <th>UID</th>
-                    <th>Ảnh</th>
-                    <th>Hành động</th>
-                </tr>
-                {uid_rows}
-            </table>
-        </div>
-    </body>
-    </html>
+        <button type="submit">Upload</button>
+    </form>
+    <hr>
+    <h3>Danh sách UID hiện có</h3>
+    {uid_list_html}
     """
     return HTMLResponse(html)
 
