@@ -1076,29 +1076,19 @@ async def recognize_face(request: Request,
             return PlainTextResponse("pending")
 
 # ============= Root =============
+
+
 @app.get("/")
 async def root():
     return {
         "status": "online",
-        "version": "3.0-InsightFace",
-        "model": "buffalo_l",
+        "version": "2.5",
         "known_faces_count": len(known_face_names),
         "known_names": known_face_names,
-        "threshold": THRESHOLD,
-        "local_ip": get_local_ip(),
-        "endpoints": {
-            "upload_panel": "/upload_panel",
-            "gallery": "/gallery",
-            "wifi_config": "/wifi_config",
-            "wifi_panel": "/wifi_panel",
-            "docs": "/docs"
-        }
+        "upload_panel": "/upload_panel",
+        "gallery": "/gallery",
+        "endpoint_docs": "/docs"
     }
 
 if __name__ == "__main__":
-    print(f"\n{'='*60}")
-    print(f"🚀 Server InsightFace đang chạy tại: http://{get_local_ip()}:5000")
-    print(f"📊 Đã load {len(known_face_names)} khuôn mặt")
-    print(f"🎯 Threshold: {THRESHOLD}")
-    print(f"{'='*60}\n")
     uvicorn.run(app, host="0.0.0.0", port=5000)
