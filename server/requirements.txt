@@ -5,5 +5,5 @@ face_recognition
 numpy
 opencv-python-headless
 jinja2
-insightface
+insightface==0.7.3
 onnxruntime
